@@ -1,0 +1,331 @@
+# AI Design SaaS - Project Rules for Cursor/Claude Code
+
+## Project Overview
+AI Design SaaS - платформа для застройщиков, позволяющая встраивать AI-генератор дизайна интерьеров на их сайты. Посетители сайта могут создавать визуализации дизайна по планировкам квартир и оставлять заявки.
+
+## Tech Stack
+- **Frontend/Backend**: Next.js 14+ (App Router)
+- **Database**: Supabase (PostgreSQL)
+- **Auth**: Supabase Auth
+- **Storage**: Supabase Storage
+- **AI**: Google Gemini API (Nano Banana)
+- **UI**: Tailwind CSS + shadcn/ui
+- **Hosting**: Vercel
+- **Widget**: Vanilla JS / Preact (~12KB)
+
+## Code Style
+
+### TypeScript
+- Use strict TypeScript mode
+- Always define types/interfaces for props, API responses
+- Use `type` for unions/intersections, `interface` for objects
+- Avoid `any`, use `unknown` if type is truly unknown
+
+```typescript
+// Good
+interface FloorPlan {
+  id: string;
+  imageUrl: string;
+  rooms: number;
+  area: number;
+}
+
+// Bad
+const floorPlan: any = {...};
+```
+
+### React/Next.js
+- Use functional components with hooks
+- Prefer Server Components where possible
+- Use `'use client'` only when necessary
+- Implement loading.tsx and error.tsx for each route
+- Use React Query / SWR for client-side data fetching
+
+```tsx
+// Good - Server Component
+async function FloorPlansList() {
+  const plans = await getFloorPlans();
+  return <FloorPlanGrid plans={plans} />;
+}
+
+// Good - Client Component when needed
+'use client';
+export function InteractiveWidget() {
+  const [isOpen, setIsOpen] = useState(false);
+  // ...
+}
+```
+
+### File Naming
+- Components: `PascalCase.tsx` (e.g., `FloorPlanCard.tsx`)
+- Utilities: `camelCase.ts` (e.g., `formatCurrency.ts`)
+- Hooks: `use-kebab-case.ts` (e.g., `use-floor-plans.ts`)
+- API routes: `route.ts` in appropriate folder
+
+### Folder Structure
+```
+app/
+├── (marketing)/          # Public pages (landing, pricing)
+├── (dashboard)/          # Protected pages (requires auth)
+│   └── [orgId]/          # Organization-scoped routes
+├── api/                  # API routes
+│   ├── v1/               # Internal API
+│   ├── widget/           # Public widget API
+│   └── collector/        # Site crawler API
+├── widget/               # Widget iframe content
+└── auth/                 # Auth pages
+
+components/
+├── ui/                   # shadcn/ui components
+├── dashboard/            # Dashboard-specific components
+├── widget/               # Widget components
+└── marketing/            # Marketing page components
+
+lib/
+├── supabase/             # Supabase clients
+├── gemini/               # Gemini API wrapper
+├── crm/                  # CRM integrations
+└── utils/                # Utility functions
+```
+
+## Database Conventions
+
+### Table Naming
+- Use `snake_case` for tables and columns
+- Plural table names: `floor_plans`, `organizations`
+- Foreign keys: `{table_name}_id` (e.g., `organization_id`)
+
+### RLS (Row Level Security)
+- Always enable RLS on all tables
+- Create policies for authenticated users
+- Use service role only in server-side code
+
+```sql
+-- Good: RLS policy
+CREATE POLICY "Users can view own org floor plans"
+  ON floor_plans FOR SELECT
+  USING (organization_id IN (
+    SELECT organization_id FROM organization_members
+    WHERE user_id = auth.uid()
+  ));
+```
+
+### Migrations
+- Use Supabase migrations in `supabase/migrations/`
+- Name format: `YYYYMMDDHHMMSS_description.sql`
+- Always include both `up` and `down` logic in comments
+
+## API Conventions
+
+### Route Structure
+```
+/api/v1/floor-plans          # CRUD for floor plans
+/api/v1/floor-plans/[id]     # Single floor plan
+/api/widget/generate         # Widget generation endpoint
+/api/collector/[clientId]/page  # Site crawler data
+```
+
+### Response Format
+```typescript
+// Success
+{
+  data: T,
+  meta?: { ... }
+}
+
+// Error
+{
+  error: {
+    code: string,
+    message: string,
+    details?: any
+  }
+}
+```
+
+### Authentication
+- Internal API (`/api/v1/*`): Supabase session
+- Widget API (`/api/widget/*`): API key in header
+- Collector API (`/api/collector/*`): Client ID in URL
+
+## Security Rules
+
+### NEVER
+- Store API keys in client-side code
+- Expose Supabase service_role key to browser
+- Trust user input without validation
+- Skip RLS policies
+
+### ALWAYS
+- Validate all inputs with Zod
+- Use parameterized queries
+- Check authorization before operations
+- Rate limit public endpoints
+
+```typescript
+// Good: Input validation
+import { z } from 'zod';
+
+const GenerateSchema = z.object({
+  floorPlanId: z.string().uuid(),
+  style: z.string().min(1).max(100),
+  prompt: z.string().max(500).optional(),
+});
+
+export async function POST(req: Request) {
+  const body = await req.json();
+  const data = GenerateSchema.parse(body);
+  // ...
+}
+```
+
+## Git Conventions
+
+### Branch Naming
+- `feature/description`
+- `fix/description`
+- `refactor/description`
+
+### Commit Messages
+- Use conventional commits: `feat:`, `fix:`, `refactor:`, `docs:`
+- Keep first line under 72 characters
+- Add body for complex changes
+
+```
+feat: add floor plan generation endpoint
+
+- Implement Gemini API integration
+- Add rate limiting
+- Store results in Supabase Storage
+```
+
+## Component Patterns
+
+### Forms
+- Use react-hook-form + zod
+- Show inline validation errors
+- Disable submit during loading
+
+```tsx
+const formSchema = z.object({
+  name: z.string().min(2),
+  rooms: z.number().min(1).max(10),
+});
+
+export function FloorPlanForm() {
+  const form = useForm<z.infer<typeof formSchema>>({
+    resolver: zodResolver(formSchema),
+  });
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)}>
+        {/* fields */}
+      </form>
+    </Form>
+  );
+}
+```
+
+### Data Fetching
+- Server Components: direct Supabase queries
+- Client Components: React Query with custom hooks
+
+```tsx
+// Server Component
+async function FloorPlansPage() {
+  const supabase = createServerClient();
+  const { data } = await supabase.from('floor_plans').select('*');
+  return <FloorPlansList plans={data} />;
+}
+
+// Client Component hook
+function useFloorPlans() {
+  return useQuery({
+    queryKey: ['floor-plans'],
+    queryFn: () => fetch('/api/v1/floor-plans').then(r => r.json()),
+  });
+}
+```
+
+## Widget Development
+
+### Bundle Size
+- Target: < 15KB gzipped for embed script
+- Use Preact or vanilla JS
+- Tree-shake aggressively
+
+### Communication
+- Use postMessage for iframe <-> parent
+- Validate message origin
+- Define clear message protocol
+
+```javascript
+// Parent to iframe
+iframe.contentWindow.postMessage({
+  type: 'LOAD_FLOOR_PLAN',
+  data: { id, imageUrl }
+}, WIDGET_ORIGIN);
+
+// Iframe to parent
+window.parent.postMessage({
+  type: 'LEAD_CAPTURED',
+  data: { name, phone, email }
+}, '*');
+```
+
+## Performance
+
+### Images
+- Use Next.js Image component
+- Implement lazy loading
+- Serve WebP format
+- Use Supabase image transforms
+
+### Caching
+- Cache Gemini responses where appropriate
+- Use SWR/React Query for client caching
+- Implement CDN caching for static assets
+
+## Testing Priorities
+
+1. API endpoints (integration tests)
+2. Form validation (unit tests)
+3. Widget communication (e2e tests)
+4. Critical user flows (e2e tests)
+
+---
+
+## Quick Reference
+
+### Common Commands
+```bash
+# Development
+npm run dev
+
+# Database
+npx supabase db push
+npx supabase gen types typescript
+
+# Build
+npm run build
+
+# Deploy
+vercel --prod
+```
+
+### Key Files
+- `.env.local` - Environment variables
+- `supabase/migrations/` - Database migrations
+- `lib/supabase/` - Supabase clients
+- `lib/gemini/` - AI integration
+- `public/widget.js` - Embed script
+
+### Environment Variables
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+SUPABASE_SERVICE_ROLE_KEY=
+GEMINI_API_KEY=
+NEXT_PUBLIC_APP_URL=
+```
